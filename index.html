@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Louisiana Bait Products — 3D 부지 모델 v8</title>
+<style>
+  :root{
+    --paper:#efeadb; --paper2:#e4ddc9; --ink:#25313a; --line:#25313a;
+    --accent:#d9a521; --accent-ink:#3d2f05;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:100%;height:100%;overflow:hidden;background:#b9cfd8;}
+  body{font-family:ui-monospace,'Cascadia Mono','SF Mono',Consolas,'Nanum Gothic Coding',monospace;color:var(--ink);}
+  #scene{position:absolute;inset:0;}
+  .panel{
+    position:absolute;background:var(--paper);border:1.5px solid var(--line);
+    box-shadow:3px 3px 0 rgba(37,49,58,.25);padding:10px 14px;
+  }
+  #titleblock{top:16px;left:16px;max-width:370px;}
+  #titleblock h1{font-size:15px;letter-spacing:.14em;font-weight:800;border-bottom:1.5px solid var(--line);padding-bottom:6px;margin-bottom:6px;}
+  #titleblock .sub{font-size:11px;line-height:1.55;}
+  #titleblock .meta{font-size:10px;margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);opacity:.75;line-height:1.5;}
+  #controls{bottom:16px;left:16px;display:flex;flex-direction:column;gap:8px;padding:10px 12px;}
+  .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+  .row .lbl{font-size:10px;letter-spacing:.08em;opacity:.7;width:100%;}
+  button{
+    font-family:inherit;font-size:11px;letter-spacing:.05em;cursor:pointer;
+    background:var(--paper);border:1.2px solid var(--line);color:var(--ink);
+    padding:5px 10px;box-shadow:2px 2px 0 rgba(37,49,58,.2);
+  }
+  button:hover{background:var(--paper2);}
+  button:active{transform:translate(1px,1px);box-shadow:1px 1px 0 rgba(37,49,58,.2);}
+  button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent-ink);}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  #hint{bottom:16px;right:16px;font-size:10px;line-height:1.6;text-align:right;padding:8px 12px;}
+  #compass{position:absolute;top:16px;right:16px;width:54px;height:54px;background:var(--paper);
+    border:1.5px solid var(--line);border-radius:50%;box-shadow:3px 3px 0 rgba(37,49,58,.25);
+    display:flex;align-items:center;justify-content:center;}
+  #needle{width:100%;height:100%;position:relative;}
+  #needle span{position:absolute;top:4px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:800;}
+  #needle:before{content:'';position:absolute;left:50%;top:50%;width:2px;height:18px;background:var(--accent);
+    transform-origin:bottom center;transform:translate(-50%,-100%);}
+  #scene canvas{touch-action:none;display:block;}
+  @media (max-width:640px){
+    #titleblock{max-width:200px;padding:7px 9px;}
+    #titleblock h1{font-size:11px;letter-spacing:.08em;}
+    #titleblock .sub{font-size:9px;}
+    #titleblock .meta{display:none;}
+    #controls{left:8px;right:8px;bottom:8px;padding:8px 9px;gap:6px;}
+    .row{gap:5px;}
+    .row .lbl{font-size:9px;}
+    button{font-size:11px;padding:9px 11px;}
+    #compass{width:40px;height:40px;top:10px;right:10px;}
+    #hint{display:none;}
+  }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+
+<div class="panel" id="titleblock">
+  <h1>LOUISIANA BAIT PRODUCTS · AMT</h1>
+  <div class="sub">3D 부지 모델 v8 · 11934 Live Oak Rd, Abbeville, LA<br>Vermilion River 연안 미끼 급속냉동 공장 + AMT 시설</div>
+  <div class="meta">근거: 2011 설계도면 · 2023 측량도 · 위성사진(AMT 이전) · 항공/현장사진<br>동측 트럭도크·자체 냉동창고(본동 절반 길이) 반영 · 실외 설비는 사진 기준 배치</div>
+</div>
+
+<div class="panel" id="controls">
+  <div class="row"><span class="lbl">표시</span>
+    <button id="btnLabels" class="on">시설 라벨</button>
+    <button id="btnFlow">생산 흐름 (하역→냉동→보관→출하)</button>
+    <button id="btnXray">본동 투시</button>
+  </div>
+  <div class="row"><span class="lbl">시점</span>
+    <button data-view="aerial">조감</button>
+    <button data-view="river">강변·선박</button>
+    <button data-view="plant">LBP 플랜트</button>
+    <button data-view="cold">냉동창고·도크</button>
+    <button data-view="inside">본동 내부</button>
+    <button data-view="amt">AMT</button>
+  </div>
+</div>
+
+<div class="panel" id="hint">드래그 회전 · 휠 확대/축소<br>우클릭(또는 Shift)+드래그 이동</div>
+<div id="compass" aria-hidden="true"><div id="needle"><span>N</span></div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+"use strict";
+const container=document.getElementById('scene');
+const isMobile=('ontouchstart' in window)&&Math.min(innerWidth,innerHeight)<820;
+const renderer=new THREE.WebGLRenderer({antialias:!isMobile,logarithmicDepthBuffer:true,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,isMobile?1.5:2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=!isMobile;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+container.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0xaccde0);
+scene.fog=new THREE.Fog(0xaccde0,950,2400);
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,2,4000);
+
+scene.add(new THREE.HemisphereLight(0xd8e9f4,0x938d74,0.55));
+const sun=new THREE.DirectionalLight(0xfff2dc,0.72);
+sun.position.set(-320,500,260);
+sun.castShadow=!isMobile;
+sun.shadow.mapSize.set(isMobile?1024:2048,isMobile?1024:2048);
+const sc=sun.shadow.camera;
+sc.left=-680;sc.right=680;sc.top=680;sc.bottom=-680;sc.far=1800;
+scene.add(sun);
+
+// ————— 재질
+const M={
+  base:new THREE.MeshLambertMaterial({color:0xccc6b5}),
+  grass:new THREE.MeshLambertMaterial({color:0x6f9a52}),
+  gravel:new THREE.MeshLambertMaterial({color:0xb7b2a4}),
+  concrete:new THREE.MeshLambertMaterial({color:0xbdbcb3}),
+  concWall:new THREE.MeshLambertMaterial({color:0xa7a59a}),
+  road:new THREE.MeshLambertMaterial({color:0x74787c}),
+  dirt:new THREE.MeshLambertMaterial({color:0xb5a07a}),
+  water:new THREE.MeshPhongMaterial({color:0x1c4a70,shininess:26,specular:0x1a2e3c}),
+  tanWall:new THREE.MeshLambertMaterial({color:0xd2c4a4}),
+  tanRoof:new THREE.MeshLambertMaterial({color:0xc2c5c2}),
+  coldWall:new THREE.MeshLambertMaterial({color:0xcfc4a4}),
+  wallWare:new THREE.MeshLambertMaterial({color:0xeff0ee}),
+  roofWare:new THREE.MeshLambertMaterial({color:0xc8ccce}),
+  wallBrine:new THREE.MeshLambertMaterial({color:0xdfd7b9}),
+  tankWhite:new THREE.MeshLambertMaterial({color:0xf0efe7}),
+  roofDark:new THREE.MeshLambertMaterial({color:0x4c4139}),
+  steel:new THREE.MeshLambertMaterial({color:0xb6bcc1}),
+  steelDark:new THREE.MeshLambertMaterial({color:0x596066}),
+  frameBlue:new THREE.MeshLambertMaterial({color:0x5b6b7d}),
+  pipe:new THREE.MeshLambertMaterial({color:0x3a3f45}),
+  wood:new THREE.MeshLambertMaterial({color:0x8a6f4d}),
+  hullRed:new THREE.MeshLambertMaterial({color:0xa8342c}),
+  deck:new THREE.MeshLambertMaterial({color:0x7c8288}),
+  white:new THREE.MeshLambertMaterial({color:0xeceff0}),
+  houseWall:new THREE.MeshLambertMaterial({color:0x9fb0b8}),
+  houseRoof:new THREE.MeshLambertMaterial({color:0x5a6268}),
+  trunk:new THREE.MeshLambertMaterial({color:0x6b5136}),
+  oak:new THREE.MeshLambertMaterial({color:0x4f7a3e}),
+  pine:new THREE.MeshLambertMaterial({color:0x3e6337}),
+  crane:new THREE.MeshLambertMaterial({color:0xd9a521}),
+  vatBlue:new THREE.MeshLambertMaterial({color:0x2f6fd0}),
+  toteBlack:new THREE.MeshLambertMaterial({color:0x2c2f33}),
+  tfmr:new THREE.MeshLambertMaterial({color:0x7d8a7d}),
+  propane:new THREE.MeshLambertMaterial({color:0xbcd8dc}),
+  carRed:new THREE.MeshLambertMaterial({color:0xb2372e}),
+  carDark:new THREE.MeshLambertMaterial({color:0x3a4048}),
+  carSilver:new THREE.MeshLambertMaterial({color:0xc4c8cc}),
+  bag:new THREE.MeshLambertMaterial({color:0xe7e7e2}),
+  green:new THREE.MeshLambertMaterial({color:0x3f6d3a}),
+};
+function mesh(g,m,x,y,z,shadow=true){const o=new THREE.Mesh(g,m);o.position.set(x,y,z);if(shadow){o.castShadow=true;o.receiveShadow=true;}return o;}
+function box(w,h,d,m,x,y,z){return mesh(new THREE.BoxGeometry(w,h,d),m,x,y,z);}
+function pad(w,d,mat,x,z,ry=0,y=0.55){
+  const g=new THREE.PlaneGeometry(w,d);g.rotateX(-Math.PI/2);
+  const m=new THREE.Mesh(g,mat);m.position.set(x,y,z);m.rotation.y=ry;m.receiveShadow=true;scene.add(m);return m;
+}
+function gable(w,d,h,mat,ridge){
+  const cw=(ridge==='x'?d:w),len=(ridge==='x'?w:d);
+  const s=new THREE.Shape();s.moveTo(-cw/2-2,0);s.lineTo(cw/2+2,0);s.lineTo(0,h);s.closePath();
+  const g=new THREE.ExtrudeGeometry(s,{depth:len+4,bevelEnabled:false});g.translate(0,0,-(len+4)/2);
+  const m=new THREE.Mesh(g,mat);if(ridge==='x')m.rotation.y=Math.PI/2;
+  m.castShadow=m.receiveShadow=true;return m;
+}
+function monoRoof(w,d,rise,mat,dir){
+  const s=new THREE.Shape();
+  s.moveTo(-w/2,0);s.lineTo(w/2,0);s.lineTo(dir>0?w/2:-w/2,rise);s.closePath();
+  const g=new THREE.ExtrudeGeometry(s,{depth:d,bevelEnabled:false});g.translate(0,0,-d/2);
+  const m=new THREE.Mesh(g,mat);m.castShadow=m.receiveShadow=true;return m;
+}
+
+// ————— 대지 · 지면
+scene.add(box(960,22,660,M.base,0,-11.2,0));
+{const g=mesh(new THREE.PlaneGeometry(660,630),M.grass,150,0.05,0);g.rotation.x=-Math.PI/2;g.castShadow=false;scene.add(g);}
+pad(560,470,M.gravel,-10,-40,0,0.35);                        // 중앙 야드
+pad(130,140,M.dirt,-262,55,0,0.5);                           // 브라인동 앞 나대지
+pad(260,170,M.dirt,60,150,0,0.45);                           // 남동측 교란지(패드 주변)
+// 진입로: Live Oak Rd → 야드 직선 + 북서 루프
+pad(544,32,M.dirt,120,-62,0,0.55);
+pad(140,32,M.dirt,-190,-96,0.55,0.55);
+pad(90,32,M.dirt,-242,-142,0.95,0.55);
+// Live Oak Rd
+pad(52,630,M.road,410,0,0,0.6);
+for(let z=-300;z<=300;z+=40)pad(2.2,16,M.white,410,z,0,0.8);
+
+// ————— Vermilion 강
+let waterMesh,waterBase;
+{
+  const g=new THREE.PlaneGeometry(180,660,isMobile?12:24,isMobile?30:60);g.rotateX(-Math.PI/2);
+  waterBase=g.attributes.position.array.slice();
+  waterMesh=new THREE.Mesh(g,M.water);waterMesh.position.set(-380,0.5,0);waterMesh.receiveShadow=true;scene.add(waterMesh);
+  const bank=box(14,8,660,M.dirt,-290,0.6,0);bank.rotation.z=0.35;scene.add(bank);
+}
+
+// ————— 부두 · 선박 (양륙 컨베이어와 일직선)
+function dockDeck(x,z){const g=new THREE.Group();
+  g.add(box(46,2.2,16,M.wood,0,3.4,0));
+  for(const dx of[-19,0,19])for(const dz of[-6,6])g.add(box(2.4,10,2.4,M.trunk,dx,-1,dz));
+  g.position.set(x,0,z);scene.add(g);}
+dockDeck(-310,36);dockDeck(-310,152);
+const boat=new THREE.Group();
+{
+  // F/V AMELIA — 멘헤이든 퍼스세인선 (선수 조타실 · 중앙 하역붐 · 선미 스키프 2정)
+  const L=150,B=28,H=13;
+  const s=new THREE.Shape();
+  s.moveTo(-L/2+8,-B/2);s.quadraticCurveTo(-L/2-4,0,-L/2+8,B/2);
+  s.lineTo(L/2-36,B/2);s.quadraticCurveTo(L/2+6,3,L/2+10,0);
+  s.quadraticCurveTo(L/2+6,-3,L/2-36,-B/2);s.closePath();
+  const hg=new THREE.ExtrudeGeometry(s,{depth:H,bevelEnabled:false});hg.rotateX(-Math.PI/2);
+  const hull=new THREE.Mesh(hg,M.hullRed);hull.castShadow=hull.receiveShadow=true;hull.position.y=-4;boat.add(hull);
+  const dk=mesh(new THREE.PlaneGeometry(L-8,B-4),M.deck,0,9.15,0);dk.rotation.x=-Math.PI/2;boat.add(dk);
+  for(const dz of[-(B/2-0.6),B/2-0.6])boat.add(box(46,2.6,1,M.white,48,8.4,dz));  // 선수 백색 셰어스트레이크
+  // 선수 조타실 (2단 + 조타창 밴드 + 레이더 마스트)
+  boat.add(box(24,8,20,M.white,46,12,0));
+  boat.add(box(17,7,14,M.white,48,19.5,0));
+  boat.add(box(17.2,2.2,14.2,M.steelDark,49,21.2,0));
+  boat.add(box(1,9,1,M.steel,44,27.5,0));
+  boat.add(box(6,0.6,0.6,M.steel,44,30.5,0));
+  // 어창 해치 (중앙 작업갑판)
+  for(const hx of[24,4,-16])boat.add(box(14,1.4,14,M.steelDark,hx,9.8,0));
+  // 중앙 마스트 + 하역 붐(녹슨) + 리깅
+  boat.add(mesh(new THREE.CylinderGeometry(1.1,1.3,34,8),M.steel,10,26,0));
+  {const bm=mesh(new THREE.CylinderGeometry(0.9,1.1,44,8),M.wood,-6,30,3);bm.rotation.z=1.05;boat.add(bm);}
+  {const c1=mesh(new THREE.CylinderGeometry(0.15,0.15,26,4),M.pipe,1,38,1.5);c1.rotation.z=0.5;boat.add(c1);}
+  // 피시펌프·기계실 구조물 (백색)
+  boat.add(box(14,8,16,M.white,-16,13,0));
+  boat.add(box(8,11,8,M.white,-27,13.5,-4));
+  boat.add(mesh(new THREE.CylinderGeometry(1.2,1.2,10,8),M.pipe,-24,20,5));
+  // 선미 스키프 2정 (양현 경사 거치)
+  for(const sd of[-1,1]){
+    const sk=new THREE.Group();
+    sk.add(box(21,3.2,6.5,M.steel,0,1.6,0));
+    sk.add(box(5,2.6,5,M.steelDark,7.5,1.8,0));
+    sk.position.set(-56,13.5,sd*8.5);
+    sk.rotation.z=0.34;sk.rotation.y=sd*0.22;
+    boat.add(sk);
+    for(const bx of[-64,-48])boat.add(box(1.6,7,1.6,M.steelDark,bx,9.5,sd*8.5));
+  }
+  boat.position.set(-362,0,34);boat.rotation.y=Math.PI/2*1.02;scene.add(boat);
+}
+// 피시펌프 양륙 배관 (선체 → 부두) + 육상 펌프 유닛
+{const pp=mesh(new THREE.CylinderGeometry(0.9,0.9,52,8),M.white,-324,4.5,42);pp.rotation.z=Math.PI/2;pp.rotation.y=0.1;scene.add(pp);}
+{ // 부두 피시펌프 스테이션 (사진 기준: 스테인리스 인클로저 + 녹색 펌프 + 백색 배관)
+  scene.add(box(11,6,7,M.steel,-294,3.6,54));                 // 펌프 엔진 인클로저
+  scene.add(box(11.5,0.6,7.5,M.steelDark,-294,6.9,54));       // 상부 덮개
+  {const pv=mesh(new THREE.CylinderGeometry(2,2,3,10),M.green,-300,2.2,50);pv.rotation.x=Math.PI/2;scene.add(pv);} // 펌프 볼류트
+  scene.add(mesh(new THREE.CylinderGeometry(1.3,1.3,6,8),M.white,-300,5,50));                     // 수직 배관
+  {const el=mesh(new THREE.CylinderGeometry(1.3,1.3,8,8),M.white,-296,7.6,50);el.rotation.z=Math.PI/2;scene.add(el);} // 엘보 수평관
+  {const dp=mesh(new THREE.CylinderGeometry(1.0,1.0,62,8),M.wood,-262,2.6,47);dp.rotation.z=Math.PI/2;dp.rotation.y=0.06;scene.add(dp);} // 육상 토출관(녹슨)
+  scene.add(box(1.2,3.2,4.5,M.white,-306,6.4,30));            // 부두 제어반
+  scene.add(box(1.2,2.6,3.5,M.white,-306,6.1,24));
+  {const gw=mesh(new THREE.BoxGeometry(14,0.6,6),M.wood,-294,3.2,36,true);gw.rotation.z=0.22;scene.add(gw);} // 갱웨이
+  scene.add(mesh(new THREE.CylinderGeometry(1.3,1.3,3.2,10),M.vatBlue,-302,2.1,42));              // 청색 드럼
+}
+
+// ————— LBP 본동 (180'×100' · 오픈 구조 · 2층 계단형: 지면 슬래브 + 고상 장비 플랫폼, 홍수 대비)
+const MB={x0:-150,x1:30,z0:-10,z1:90};
+const shell=[];                                               // 본동 투시 토글 대상(지붕·패널)
+pad(184,104,M.concrete,-60,40,0,0.68);                        // 지면 콘크리트 슬래브
+{
+  const g=new THREE.Group();
+  function sh(m){shell.push(m);return m;}
+  for(let x=MB.x0;x<=MB.x1;x+=30)for(const z of[MB.z0,MB.z1]){
+    const ch=(x<=-45?28:24);
+    g.add(box(2.2,ch,2.2,M.steelDark,x,ch/2,z));
+  }
+  for(const z of[MB.z0,MB.z1]){
+    g.add(sh(box(105,5,1.4,M.tanWall,-97.5,25.5,z)));
+    g.add(sh(box(75,4.5,1.4,M.tanWall,-7.5,21.5,z)));
+  }
+  g.add(sh(box(1.4,5,100,M.tanWall,-150,25.5,40)));
+  g.add(sh(box(1.4,4.5,26,M.tanWall,30,21.5,3)));
+  g.add(sh(box(40,14,1.4,M.tanWall,-124,11,MB.z0)));
+  g.add(sh(box(1.4,14,22,M.tanWall,30,11,1)));
+  g.add(sh(box(24,14,1.4,M.tanWall,-64,11,MB.z1)));
+  const r1=monoRoof(105,100,6,M.tanRoof,+1);r1.position.set(-97.5,28,40);g.add(sh(r1));
+  g.add(sh(box(3,7,100,M.tanWall,-45,31.5,40)));
+  const r2=monoRoof(75,100,6,M.tanRoof,-1);r2.position.set(-7.5,24,40);g.add(sh(r2));
+  scene.add(g);
+}
+// ————— 본동 내부 (사진·영상 기준)
+M.rust=new THREE.MeshLambertMaterial({color:0x9c7a58});
+M.boxwood=new THREE.MeshLambertMaterial({color:0xdccfa9});
+M.orange=new THREE.MeshLambertMaterial({color:0xd2622a});
+// ※ 브라인 탱크는 본동 내부에 없음 — 서측 외부 구형 브라인 설비가 실제 탱크 (도면의 내부 배치 무시)
+{ // 서측 외부 브라인 탱크로 오르는 황색 계단 + 캣워크 (서측 개구부 방향)
+  for(let i=0;i<8;i++)scene.add(box(1.9,0.35,4.2,M.crane,-116.5-i*2.05,1.2+i*1.5,34));
+  for(const sz of[31.9,36.1]){
+    const sg=box(21,0.55,0.55,M.crane,-124,6.6,sz);sg.rotation.z=0.63;scene.add(sg);
+    const rl=box(21,0.4,0.4,M.crane,-124,10.1,sz);rl.rotation.z=0.63;scene.add(rl);
+    for(let i=0;i<4;i++)scene.add(box(0.4,3.4,0.4,M.crane,-117.5-i*4.1,4.6+i*3.0,sz));
+  }
+  scene.add(box(7,0.9,7,M.crane,-134.5,12.2,34));             // 상부 랜딩
+  scene.add(box(26,0.9,6,M.crane,-148,12.2,34));              // 서측 외부 탱크로 이어지는 캣워크
+}
+// 포장 라인 (브라인 탱크 인근 밀착): 탱크 → 짧은 컨베이어 → 충전 호퍼 · 벨로우즈 슈트
+scene.add(box(20,1.8,4.5,M.crane,-160,13,46));
+{const inc=box(22,1.8,4.5,M.crane,-141,17.5,46);inc.rotation.z=0.52;scene.add(inc);}
+scene.add(box(11,1,11,M.crane,-126,21,46));                   // 충전 스테이션 황색 플랫폼
+for(const px of[-131,-121])for(const pz of[41,51])scene.add(box(1.6,21,1.6,M.crane,px,10.5,pz));
+scene.add(box(7,7,6,M.tankWhite,-126,25.5,46));               // 백색 충전 호퍼
+for(let i=0;i<6;i++)scene.add(mesh(new THREE.CylinderGeometry(2.1,2.3,1,10),M.rust,-126,16.5-i*1.1,46));
+{const st2=box(12,1,4,M.crane,-117,16,52);st2.rotation.z=0.55;scene.add(st2);}
+// 목재 박스 더미 + Doosan 지게차 2대 (사진 기준)
+scene.add(box(36,9,18,M.boxwood,0,5.2,28));
+scene.add(box(28,9,15,M.boxwood,4,5.2,58));
+function forklift(x,z,ry){
+  const g=new THREE.Group();
+  g.add(box(7,4.2,4.6,M.orange,0,3.4,0));
+  g.add(box(1,7.5,4.4,M.steelDark,4.6,4.8,0));
+  for(const fz of[-1.4,1.4])g.add(box(3.6,0.4,0.9,M.steelDark,7,1.4,fz));
+  for(const dx of[-2.2,2.2])for(const dz of[-2.1,2.1])g.add(mesh(new THREE.CylinderGeometry(1.2,1.2,0.9,8).rotateX(Math.PI/2),M.pipe,dx,1.2,dz));
+  g.position.set(x,0.7,z);g.rotation.y=ry;scene.add(g);
+}
+forklift(16,14,2.6);forklift(19,23,2.8);
+{const tr=box(118,0.2,1.6,M.pipe,-70,0.85,44);tr.castShadow=false;scene.add(tr);}   // 바닥 배수 트렌치
+// 압축기실/기계실 (Vilter · 남서 코너 · 유일한 2층 고상 구조 — 홍수 대비)
+for(const cx of[-146,-134,-122])for(const cz of[71,88])scene.add(box(1.8,8,1.8,M.crane,cx,4,cz));
+scene.add(box(30,1.2,20,M.crane,-134,8.3,79.5));              // 황색 고상 플랫폼
+scene.add(box(28,10,18,M.steel,-134,13.9,79.5));              // 기계실(골강판 벽)
+scene.add(box(29,1,19,M.tanRoof,-134,19.4,79.5));
+{ // 기계실 진입 황색 계단 (동측)
+  const st=box(16,1.1,4.5,M.crane,-110,4.6,79.5);st.rotation.z=-0.55;scene.add(st);
+  for(const sz of[77.6,81.4]){const rl=box(16,0.4,0.4,M.crane,-110,8.2,sz);rl.rotation.z=-0.55;scene.add(rl);}
+}
+
+// ————— LBP 자체 냉동창고 (~200MT · 본동 절반 크기 · 남측 라인 본동과 정렬, 동측으로만 돌출)
+{
+  const g=new THREE.Group();
+  g.add(box(69,2,54,M.concrete,62.5,7,65));
+  for(const z of[40,90])for(let x=35;x<=95;x+=30)g.add(box(2.4,7,2.4,M.steelDark,x,3.5,z));
+  g.add(box(65,14,50,M.coldWall,62.5,15,65));
+  const r=gable(65,50,8,M.tanRoof,'z');r.position.set(62.5,22,65);g.add(r);
+  scene.add(g);
+}
+
+// ————— 구형 브라인 급속냉동 설비 ×2 (본동 서측 · 강 방향)
+function brineUnit(x,z){
+  const g=new THREE.Group();
+  const hop=new THREE.Mesh(new THREE.CylinderGeometry(34,7,14,4,1),M.tankWhite);
+  hop.rotation.y=Math.PI/4;hop.scale.set(1.18,1,0.85);hop.position.y=13;
+  hop.castShadow=hop.receiveShadow=true;g.add(hop);
+  g.add(box(56,12,40,M.tankWhite,0,26,0));
+  g.add(box(56,14,40,M.wallBrine,0,39,0));
+  const r=gable(56,40,9,M.roofDark,'x');r.position.y=46;g.add(r);
+  for(const dx of[-24,24])for(const dz of[-16,16])g.add(box(3,14,3,M.steelDark,dx,7,dz));
+  for(const dx of[-16,10]){
+    g.add(mesh(new THREE.CylinderGeometry(1.1,1.1,24,8),M.pipe,dx,26,-21));
+    const h=mesh(new THREE.CylinderGeometry(1.1,1.1,30,8),M.pipe,dx-2,15,-21);h.rotation.z=Math.PI/2;g.add(h);
+  }
+  for(const dz of[-9,9]){const ch=mesh(new THREE.CylinderGeometry(2.4,2.4,20,8),M.pipe,8,48,dz);ch.rotation.z=0.9;g.add(ch);}
+  g.position.set(x,0,z);scene.add(g);return g;
+}
+brineUnit(-206,14);
+brineUnit(-206,82);
+{
+  const t=new THREE.Group();
+  t.add(box(16,52,18,M.steel,0,26,0));
+  t.add(box(10,10,12,M.steelDark,0,58,0));
+  t.add(box(10,4,104,M.steel,0,52,0));
+  t.add(box(3,60,3,M.crane,-12,30,0));
+  t.add(box(3,60,3,M.crane,12,30,0));
+  t.add(box(28,3,3,M.crane,0,60,0));
+  t.add(box(3,3,70,M.crane,0,58,-8));
+  t.position.set(-206,0,48);scene.add(t);
+  // 강 부두까지 일직선 양륙 컨베이어
+  const inc=box(100,3.5,7,M.steelDark,-262,26,42);
+  inc.rotation.z=0.52;scene.add(inc);
+  for(const p of[[-302,7,42],[-282,13,42],[-256,25,42],[-230,39,42]])
+    scene.add(box(2.2,p[1]*2,2.2,M.steelDark,p[0],p[1],p[2]));
+  scene.add(box(30,4,8,M.steel,-164,20,48));                  // 본동 연결 캣워크
+  const pp=mesh(new THREE.CylinderGeometry(1.4,1.4,34,8),M.pipe,-164,24,44);pp.rotation.z=Math.PI/2;scene.add(pp);
+}
+
+// ————— 응축기 구역 (브라인동 남측 · 강변 쪽): BAC 증발식 응축기 ×3 + 수액기 + 브라인 순환탱크
+for(let i=0;i<3;i++){
+  const cx=-228+i*16;
+  scene.add(box(13,18,13,M.steel,cx,9,126));
+  scene.add(box(13,3.5,13,M.steelDark,cx,20.5,126));
+  scene.add(mesh(new THREE.CylinderGeometry(4.5,4.5,1,10),M.steelDark,cx,22.4,126));
+}
+// 응축기 북측면 배관 랙 + 약품 캐비닛
+scene.add(box(46,1.2,1.2,M.white,-212,16,118.5));
+scene.add(box(46,1.2,1.2,M.tankWhite,-212,12.5,118.5));
+for(const cx of[-228,-212,-196])scene.add(mesh(new THREE.CylinderGeometry(0.7,0.7,9,8),M.white,cx,14,118.5));
+scene.add(box(4,6.5,3,M.gravel,-212,3.2,116));
+// 브라인동 → 응축기 연결 배관
+{const p=mesh(new THREE.CylinderGeometry(1.2,1.2,20,8),M.pipe,-206,20,112);p.rotation.x=Math.PI/2;scene.add(p);}
+// 수액기(고압 리시버 추정) — 백색 수평 탱크 2기
+{const t=mesh(new THREE.CylinderGeometry(4,4,26,12),M.tankWhite,-226,4,105);t.rotation.z=Math.PI/2;scene.add(t);}
+{const t=mesh(new THREE.CylinderGeometry(3.2,3.2,20,12),M.tankWhite,-198,3.4,105);t.rotation.z=Math.PI/2;scene.add(t);}
+// 브라인 순환탱크 (골강판 원형 · 강측 1기만 존재)
+scene.add(mesh(new THREE.CylinderGeometry(9,9,14,18),M.steel,-256,7,118));
+scene.add(mesh(new THREE.CylinderGeometry(8,8,0.4,18),M.steelDark,-256,14.2,118));
+// 수액기 상부 백색 배관 랙 (사진 기준)
+scene.add(box(34,1,1,M.white,-222,15,105));
+for(const rx of[-238,-206])scene.add(box(1,11,1,M.white,rx,9.5,105));
+
+// ————— 트럭 도크 (본동 동측 게이블 개구부 · 저옹벽 차선, 사진 기준)
+pad(100,26,M.road,80,26,0,0.6);
+scene.add(box(100,3.5,2,M.concWall,80,1.75,12));              // 북측 저옹벽
+scene.add(box(56,3.5,2,M.concWall,124,1.75,40));              // 남측 저옹벽(냉동창고 동쪽 구간)
+scene.add(box(1.6,12,20,M.pipe,30.4,13.5,26));                // 본동 동측 게이블 개구부(SAFETY ZONE)
+scene.add(box(46,1.5,30,M.tanRoof,55,17,26));                 // 도크 캐노피
+for(const cx of[36,76])for(const cz of[14,38])scene.add(box(2,16.5,2,M.steelDark,cx,8.25,cz));
+function trailerBox(x,z,ry){
+  const g=new THREE.Group();
+  g.add(box(46,9.5,8.5,M.white,0,7.5,0));
+  for(const dx of[8,15])for(const dz of[-3.4,3.4])g.add(mesh(new THREE.CylinderGeometry(2,2,1.6,10),M.pipe,dx,2,dz));
+  g.add(box(1.4,4.5,1.4,M.steelDark,-16,2.2,0));
+  g.position.set(x,0,z);g.rotation.y=ry;scene.add(g);return g;
+}
+trailerBox(54,26,Math.PI);                                    // 도크 접안 트레일러(서향 후진 · 개구부 진입)
+{const ramp=box(12,0.6,10,M.wood,34,5,26);ramp.rotation.z=0.35;scene.add(ramp);}
+
+// ————— 브라인 교반시설 (남동측 · 콘크리트 저류조: 브라인 저장 + 상부 교반 장비)
+pad(88,71,M.concrete,130,152.5,0,0.5);
+scene.add(box(94,7,2.5,M.concWall,130,3.5,116));              // 북벽
+scene.add(box(94,7,2.5,M.concWall,130,3.5,189));              // 남벽
+scene.add(box(2.5,7,75,M.concWall,84,3.5,152.5));             // 서벽
+scene.add(box(2.5,7,75,M.concWall,176,3.5,152.5));            // 동벽
+M.bladder=new THREE.MeshLambertMaterial({color:0xc9b48b});
+scene.add(box(54,2.4,58,M.bladder,112,1.9,152.5));             // 브라인 블래더(탄색 멤브레인)
+{const wp=mesh(new THREE.PlaneGeometry(30,64),M.water,155,2.2,152.5,false);wp.rotation.x=-Math.PI/2;scene.add(wp);} // 저류 브라인
+{ // 교반기/윈치 (동벽 상부 · 황색)
+  scene.add(box(5,1.2,4,M.crane,172,7.6,138));
+  scene.add(mesh(new THREE.CylinderGeometry(1.5,1.5,2.6,10),M.crane,170.8,9.6,138));
+  scene.add(mesh(new THREE.CylinderGeometry(1.5,1.5,2.6,10),M.crane,173.4,9.6,138));
+}
+for(const pz of[142,154,166]){const p=box(0.9,9,7,M.wood,170,5.4,pz);p.rotation.z=0.5;scene.add(p);} // 벽에 기댄 팔레트
+{ // BM-3 브라인 제조기 (교반 저류조 북벽 외측 · 냉동창고 쪽)
+  const g=new THREE.Group();
+  g.add(box(9,8,9,M.tankWhite,0,4,0));
+  const h=new THREE.Mesh(new THREE.CylinderGeometry(8,4.5,5,4,1),M.steel);
+  h.rotation.y=Math.PI/4;h.position.y=10.5;h.castShadow=h.receiveShadow=true;g.add(h);
+  g.position.set(102,0,109);scene.add(g);
+}
+scene.add(box(10,9,8,M.steel,170,4.5,108));                   // 펌프 창고(북동 코너)
+scene.add(box(11,1,9,M.roofDark,170,10,108));
+{ // 트랙터 (저류조 북측 외부)
+  const g=new THREE.Group();
+  g.add(box(9,4,5,M.green,0,4,0));
+  g.add(box(4,3,4.5,M.green,-2,7,0));
+  g.add(mesh(new THREE.CylinderGeometry(2.6,2.6,1.6,10).rotateX(Math.PI/2),M.pipe,3,2.6,2.8));
+  g.add(mesh(new THREE.CylinderGeometry(2.6,2.6,1.6,10).rotateX(Math.PI/2),M.pipe,3,2.6,-2.8));
+  g.add(mesh(new THREE.CylinderGeometry(1.6,1.6,1.4,10).rotateX(Math.PI/2),M.pipe,-3.4,1.6,2.6));
+  g.add(mesh(new THREE.CylinderGeometry(1.6,1.6,1.4,10).rotateX(Math.PI/2),M.pipe,-3.4,1.6,-2.6));
+  g.position.set(146,0,106);g.rotation.y=0.5;scene.add(g);
+}
+{const t=mesh(new THREE.CylinderGeometry(5.5,5.5,28,14),M.propane,204,5.5,150);t.rotation.z=Math.PI/2;scene.add(t);}
+scene.add(box(9,6,5.5,M.tfmr,78,3,93.5));                     // 변압기 750kVA (냉동창고 남측 벽 밀착 · 강가 기준 좌측)
+
+// ————— 사무실(주택) · 북측 진입로 루프변
+{
+  const g=new THREE.Group();
+  g.add(box(40,10,26,M.houseWall,0,5,0));
+  const r=gable(40,26,7,M.houseRoof,'x');r.position.y=10;g.add(r);
+  g.add(box(40,0.8,9,M.houseRoof,0,9,-16));
+  for(const dx of[-16,0,16])g.add(box(1,9,1,M.white,dx,4.5,-19));
+  g.position.set(-150,0,-135);scene.add(g);
+}
+// 차량 (사무실·야드 주변)
+function car(mat,x,z,ry,pickup){
+  const g=new THREE.Group();
+  g.add(box(14,3.2,6.4,mat,0,3,0));
+  g.add(box(pickup?6:7.5,2.6,5.8,mat,pickup?-2.5:-0.5,5.6,0));
+  for(const dx of[-4.5,4.5])for(const dz of[-3.2,3.2])g.add(mesh(new THREE.CylinderGeometry(1.4,1.4,1,8).rotateX(Math.PI/2),M.pipe,dx,1.4,dz));
+  g.position.set(x,0,z);g.rotation.y=ry;scene.add(g);
+}
+car(M.carSilver,-196,-140,0.2);
+car(M.carDark,-186,-156,0.05);
+car(M.carDark,-176,-124,0.35);
+car(M.carSilver,-182,-188,0.1);
+car(M.carRed,-290,-122,-0.35,true);
+car(M.carDark,-176,-166,0.15);
+// 북서측 주기 트레일러
+trailerBox(-244,-240,0.25);
+trailerBox(-276,-252,0.1);
+
+// ————— AMT 하역장 (VAT 보관 캐노피 · 북서측 강변)
+pad(92,72,M.concrete,-234,-177,0,0.6);
+{
+  const g=new THREE.Group();
+  const r=gable(84,54,5,M.steel,'x');r.position.y=17;g.add(r);
+  for(const dx of[-38,-12,12,38])for(const dz of[-24,24])g.add(box(2.2,17,2.2,M.frameBlue,dx,8.5,dz));
+  for(const dz of[-24,24])g.add(box(80,2,2.4,M.frameBlue,0,16,dz));
+  g.position.set(-234,0,-177);scene.add(g);
+  const vg=new THREE.BoxGeometry(4.4,4.4,4.4);
+  for(let ix=0;ix<4;ix++)for(let iz=0;iz<4;iz++){
+    const n=2+((ix+iz)%2);
+    for(let k=0;k<n;k++)scene.add(mesh(vg,M.vatBlue,-218+ix*7,2.2+k*4.5,-197+iz*10));
+  }
+  for(let i=0;i<6;i++)for(let k=0;k<5;k++)
+    scene.add(mesh(new THREE.BoxGeometry(4.6,0.8,4.6),M.vatBlue,-284+(i%3)*7,0.9+k*0.95,-195+Math.floor(i/3)*9));
+  for(let i=0;i<5;i++)scene.add(box(4.4,4.2,4.4,M.toteBlack,-248+i*6.5,2.4,-221));
+}
+
+// ————— AMT 비료 가공시설 (도로변 대형 백색 창고 200'×80')
+{
+  const g=new THREE.Group();
+  g.add(box(200,30,80,M.wallWare,0,15,0));
+  const r=gable(200,80,12,M.roofWare,'x');r.position.y=30;g.add(r);
+  g.add(box(1.6,17,22,M.pipe,-99.6,8.5,6));
+  g.add(box(16,12,20,M.wallWare,106,6,20));
+  g.position.set(250,0,-190);scene.add(g);
+  const bg=new THREE.BoxGeometry(5,4,5);
+  for(let ix=0;ix<5;ix++)for(let iz=0;iz<3;iz++)scene.add(mesh(bg,M.bag,352+ix*7,2,-232+iz*8));
+  for(let ix=0;ix<8;ix++)for(let iz=0;iz<2;iz++)scene.add(mesh(bg,M.bag,206+ix*8,2,-132+iz*8));
+  for(let i=0;i<5;i++)scene.add(box(8,6,6,M.green,176+i*11,3,-96));
+}
+
+// ————— 야드 소품
+{
+  const c1=box(40,8.5,8,M.steelDark,300,4.25,-92);c1.rotation.y=0.3;scene.add(c1);   // 도로변 컨테이너
+  const c2=box(40,8.5,8,M.steel,-96,4.25,-128);c2.rotation.y=0.15;scene.add(c2);
+  for(const p of[[-34,-150],[-22,-158],[-10,-150]])scene.add(mesh(new THREE.CylinderGeometry(7.5,7.5,13,14),M.white,p[0],6.5,p[1]));
+  const tg=new THREE.CylinderGeometry(4.5,4.5,7,10);
+  for(const p of[[6,-116],[18,-122],[30,-116],[6,-102],[18,-96],[42,-110]])scene.add(mesh(tg,M.white,p[0],3.5,p[1]));
+  for(const p of[[120,-92],[168,-64],[210,-96],[336,-24]]){
+    const w=mesh(new THREE.SphereGeometry(9,7,5),M.wood,p[0],3,p[1]);w.scale.y=0.45;scene.add(w);
+  }
+}
+
+// ————— 수목 (위성사진 기준: 강변·남측 대군락·중동부·도로변)
+function oak(x,z,s=1){const g=new THREE.Group();
+  g.add(mesh(new THREE.CylinderGeometry(1.6*s,2.2*s,10*s,7),M.trunk,0,5*s,0));
+  g.add(mesh(new THREE.SphereGeometry(9*s,8,6),M.oak,0,14*s,0));
+  g.add(mesh(new THREE.SphereGeometry(6*s,8,6),M.oak,5*s,11*s,3*s));
+  g.position.set(x,0,z);scene.add(g);}
+function pine(x,z,s=1){const g=new THREE.Group();
+  g.add(mesh(new THREE.CylinderGeometry(1*s,1.4*s,12*s,6),M.trunk,0,6*s,0));
+  g.add(mesh(new THREE.ConeGeometry(6*s,20*s,7),M.pine,0,20*s,0));
+  g.position.set(x,0,z);scene.add(g);}
+// 강변
+oak(-300,-96,1.5);oak(-316,-260,1.4);oak(-296,-286,1.2);
+oak(-292,120,1.1);oak(-288,210,1.5);oak(-266,252,1.2);oak(-160,246,1.3);
+// 남측 대군락 (본동·패드 이남)
+oak(-96,196,1.4);oak(-58,224,1.3);oak(-12,252,1.4);oak(34,236,1.5);
+oak(92,254,1.3);oak(146,232,1.3);oak(58,268,1.1);oak(-140,236,1.2);
+pine(112,226,1.1);pine(210,214,1.1);pine(232,176,1.0);pine(214,128,1.15);
+// 중동부 수림 (냉동창고 동측)
+pine(150,18,1.0);pine(168,56,1.2);pine(192,86,1.2);pine(156,96,0.95);pine(214,44,1.0);
+// 북측·도로변
+oak(-64,-206,1.3);oak(8,-222,1.2);oak(84,-232,1.1);oak(-206,-256,1.2);
+pine(330,-116,1.1);pine(354,-88,1.0);pine(322,-62,1.2);pine(360,-262,1.1);
+pine(374,120,1.1);pine(356,170,1.0);
+
+// ————— 라벨
+function makeSprite(text,sub,accent){
+  const c=document.createElement('canvas');c.width=620;c.height=sub?170:120;
+  const x=c.getContext('2d');
+  x.fillStyle=accent?'#d9a521':'rgba(239,234,219,0.94)';
+  x.strokeStyle='#25313a';x.lineWidth=5;
+  const r=18,W=c.width-10,H=c.height-10;
+  x.beginPath();
+  x.moveTo(5+r,5);x.arcTo(5+W,5,5+W,5+H,r);x.arcTo(5+W,5+H,5,5+H,r);
+  x.arcTo(5,5+H,5,5,r);x.arcTo(5,5,5+W,5,r);x.closePath();
+  x.fill();x.stroke();
+  x.fillStyle='#25313a';x.textAlign='center';
+  x.font='700 50px system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
+  x.fillText(text,c.width/2,sub?76:78);
+  if(sub){x.font='400 33px system-ui, sans-serif';x.globalAlpha=.8;x.fillText(sub,c.width/2,130);}
+  const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false}));
+  const s=0.135;sp.scale.set(c.width*s,c.height*s,1);return sp;
+}
+const labels=new THREE.Group(),stations=new THREE.Group();
+function addLabel(t,s,x,y,z){const sp=makeSprite(t,s,false);sp.position.set(x,y,z);labels.add(sp);}
+function addStation(t,x,y,z){const sp=makeSprite(t,'',true);sp.position.set(x,y,z);stations.add(sp);}
+addLabel('버밀리언 강','Vermilion River',-380,26,-210);
+addLabel('F/V AMELIA','멘헤이든 퍼스세인선 · 선미 스키프 2정',-362,52,34);
+addLabel('하역 부두 · 피시펌프','fish pump station',-310,26,20);
+addLabel('브라인 급속냉동 설비 ×2','구형 · 본동 서측',-206,88,48);
+addLabel('LBP 본동','오픈 구조 · 패킹 작업동',-60,60,40);
+addLabel('압축기실·기계실','Vilter · 유일한 2층 고상(홍수 대비)',-134,30,79);
+addLabel('LBP 냉동창고','약 200MT · 본동 절반 크기',62,46,65);
+addLabel('트럭 도크','본동 게이블 개구부 · 저옹벽 차선',85,32,26);
+addLabel('브라인 교반시설','콘크리트 저류조 · 교반기',130,30,152);
+addLabel('브라인 제조기','BM-3 · 냉동창고 쪽 벽면',102,26,109);
+addLabel('응축기 타워 ×3','BAC 증발식 콘덴서',-212,44,126);
+addLabel('수액기 탱크','고압 리시버 추정',-226,20,100);
+addLabel('브라인 순환탱크','강측 1기',-256,28,118);
+addLabel('사무실','주택 겸용 · 진입로 루프변',-150,32,-135);
+addLabel('AMT 하역장','VAT 보관 캐노피 · 강과 이격',-234,42,-177);
+addLabel('AMT 비료 가공시설','200′×80′',250,66,-190);
+addLabel('변압기','Entergy 750kVA',78,16,96);
+addLabel('Live Oak Rd','',410,26,-274);
+scene.add(labels);
+addStation('① 부두 하역 · 어획물 양륙',-330,58,20);
+addStation('② 브라인 급속냉동',-206,108,48);
+addStation('③ 본동 → 자체 냉동창고 보관',10,80,52);
+addStation('④ 트럭 도크 상차',85,48,26);
+addStation('⑤ Live Oak Rd 출하',340,40,-60);
+stations.visible=false;scene.add(stations);
+
+// ————— 생산 흐름 경로
+const flowPts=[
+  new THREE.Vector3(-362,12,34), new THREE.Vector3(-322,7,36),
+  new THREE.Vector3(-306,8,42),  new THREE.Vector3(-262,26,42),
+  new THREE.Vector3(-226,46,44), new THREE.Vector3(-208,58,46),
+  new THREE.Vector3(-206,34,16), new THREE.Vector3(-176,20,44),
+  new THREE.Vector3(-120,16,45), new THREE.Vector3(-60,15,50),
+  new THREE.Vector3(-10,15,55),  new THREE.Vector3(40,14,58),
+  new THREE.Vector3(62,14,65),   new THREE.Vector3(56,14,44),
+  new THREE.Vector3(44,13,28),   new THREE.Vector3(70,11,26),
+  new THREE.Vector3(130,8,26),   new THREE.Vector3(200,7,-10),
+  new THREE.Vector3(298,6,-52),  new THREE.Vector3(392,6,-62)
+];
+const flowCurve=new THREE.CatmullRomCurve3(flowPts);
+const flowGroup=new THREE.Group();
+{
+  const pts=flowCurve.getPoints(280);
+  const g=new THREE.BufferGeometry().setFromPoints(pts);
+  const line=new THREE.Line(g,new THREE.LineDashedMaterial({color:0xd9a521,dashSize:8,gapSize:5}));
+  line.computeLineDistances();flowGroup.add(line);
+}
+const dots=[];
+{
+  const dg=new THREE.SphereGeometry(2.6,10,8);
+  const dm=new THREE.MeshBasicMaterial({color:0xd9a521});
+  for(let i=0;i<15;i++){const d=new THREE.Mesh(dg,dm);flowGroup.add(d);dots.push(d);}
+}
+flowGroup.visible=false;scene.add(flowGroup);
+
+// ————— 커스텀 궤도 카메라
+const target=new THREE.Vector3(-10,10,-10);
+let theta=-0.75,phi=0.93,radius=820;
+let curTheta=theta,curPhi=phi,curRadius=radius,curTarget=target.clone();
+let dragging=false,panning=false,px=0,py=0,autoRotate=true;
+const el=renderer.domElement;
+el.addEventListener('contextmenu',e=>e.preventDefault());
+const activePtrs=new Set();
+el.addEventListener('pointerdown',e=>{
+  autoRotate=false;activePtrs.add(e.pointerId);dragging=true;panning=(e.button===2||e.shiftKey);
+  px=e.clientX;py=e.clientY;el.setPointerCapture(e.pointerId);
+});
+function endPtr(e){activePtrs.delete(e.pointerId);if(activePtrs.size===0)dragging=false;try{el.releasePointerCapture(e.pointerId);}catch(_){ }}
+el.addEventListener('pointerup',endPtr);
+el.addEventListener('pointercancel',endPtr);
+el.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  if(activePtrs.size>1){px=e.clientX;py=e.clientY;return;}   // 핀치 중 회전 금지
+  const dx=e.clientX-px,dy=e.clientY-py;px=e.clientX;py=e.clientY;
+  if(panning){
+    const dir=new THREE.Vector3(),right=new THREE.Vector3(),up=new THREE.Vector3(0,1,0);
+    camera.getWorldDirection(dir);right.crossVectors(dir,up).normalize();
+    const fwd=new THREE.Vector3().crossVectors(up,right).normalize();
+    const k=curRadius*0.0016;
+    target.addScaledVector(right,-dx*k);target.addScaledVector(fwd,dy*k);
+    target.x=Math.max(-470,Math.min(470,target.x));
+    target.z=Math.max(-330,Math.min(330,target.z));
+  }else{
+    theta-=dx*0.0055;
+    phi=Math.max(0.14,Math.min(1.45,phi-dy*0.004));
+  }
+});
+el.addEventListener('wheel',e=>{
+  e.preventDefault();autoRotate=false;
+  radius=Math.max(140,Math.min(1600,radius*(1+Math.sign(e.deltaY)*0.09)));
+},{passive:false});
+let pinchD=0;
+el.addEventListener('touchstart',e=>{if(e.touches.length===2){const a=e.touches[0],b=e.touches[1];pinchD=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);}},{passive:true});
+el.addEventListener('touchmove',e=>{
+  if(e.touches.length===2){const a=e.touches[0],b=e.touches[1];
+    const d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    radius=Math.max(140,Math.min(1600,radius*(pinchD/d)));pinchD=d;}
+},{passive:true});
+
+const ghostWall=new THREE.MeshLambertMaterial({color:0xd2c4a4,transparent:true,opacity:0.12,depthWrite:false});
+const ghostRoof=new THREE.MeshLambertMaterial({color:0xc2c5c2,transparent:true,opacity:0.12,depthWrite:false});
+let xray=false;
+const btnX=document.getElementById('btnXray');
+function setXray(on){
+  xray=on;
+  for(const m of shell){
+    if(on){if(!m.userData.mat0)m.userData.mat0=m.material;m.material=(m.userData.mat0===M.tanRoof?ghostRoof:ghostWall);m.castShadow=false;}
+    else if(m.userData.mat0){m.material=m.userData.mat0;m.castShadow=true;}
+  }
+  btnX.classList.toggle('on',on);
+}
+btnX.addEventListener('click',()=>setXray(!xray));
+const views={
+  aerial:{theta:-0.75,phi:0.93,r:820,t:new THREE.Vector3(-10,10,-10)},
+  river:{theta:-2.35,phi:1.12,r:430,t:new THREE.Vector3(-270,18,40)},
+  plant:{theta:-2.15,phi:1.0,r:400,t:new THREE.Vector3(-130,26,45)},
+  cold:{theta:0.9,phi:1.0,r:280,t:new THREE.Vector3(62,14,48)},
+  inside:{theta:0.75,phi:1.18,r:200,t:new THREE.Vector3(-70,12,40)},
+  amt:{theta:0.55,phi:0.98,r:470,t:new THREE.Vector3(240,14,-180)}
+};
+document.querySelectorAll('[data-view]').forEach(b=>{
+  b.addEventListener('click',()=>{
+    autoRotate=false;
+    const v=views[b.dataset.view];
+    theta=v.theta;phi=v.phi;radius=v.r;target.copy(v.t);
+    if(b.dataset.view==='inside'&&!xray)setXray(true);
+  });
+});
+const btnL=document.getElementById('btnLabels');
+btnL.addEventListener('click',()=>{labels.visible=!labels.visible;btnL.classList.toggle('on',labels.visible);});
+const btnF=document.getElementById('btnFlow');
+btnF.addEventListener('click',()=>{
+  flowGroup.visible=!flowGroup.visible;stations.visible=flowGroup.visible;
+  btnF.classList.toggle('on',flowGroup.visible);
+});
+const needle=document.getElementById('needle');
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,isMobile?1.5:2));
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+// ————— 루프
+const clock=new THREE.Clock();
+const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let frameNo=0;
+function animate(){
+  requestAnimationFrame(animate);
+  frameNo++;
+  const t=clock.getElapsedTime();
+  if(autoRotate&&!reduceMotion)theta+=0.0012;
+  curTheta+=(theta-curTheta)*0.12;
+  curPhi+=(phi-curPhi)*0.12;
+  curRadius+=(radius-curRadius)*0.12;
+  curTarget.lerp(target,0.12);
+  camera.position.set(
+    curTarget.x+curRadius*Math.sin(curPhi)*Math.sin(curTheta),
+    curTarget.y+curRadius*Math.cos(curPhi),
+    curTarget.z+curRadius*Math.sin(curPhi)*Math.cos(curTheta)
+  );
+  camera.lookAt(curTarget);
+  needle.style.transform='rotate('+(-curTheta*180/Math.PI+180)+'deg)';
+  if(!reduceMotion&&(!isMobile||frameNo%2===0)){
+    const pos=waterMesh.geometry.attributes.position;
+    for(let i=0;i<pos.count;i++){
+      const bx=waterBase[i*3],bz=waterBase[i*3+2];
+      pos.array[i*3+1]=waterBase[i*3+1]+Math.sin(bx*0.05+t*1.1)*0.5+Math.cos(bz*0.06+t*0.7)*0.4;
+    }
+    pos.needsUpdate=true;
+    boat.position.y=Math.sin(t*0.8)*0.35;
+    boat.rotation.z=Math.sin(t*0.6)*0.008;
+  }
+  if(flowGroup.visible&&!reduceMotion){
+    for(let i=0;i<dots.length;i++){
+      const u=(t*0.04+i/dots.length)%1;
+      dots[i].position.copy(flowCurve.getPointAt(u));
+    }
+  }
+  renderer.render(scene,camera);
+}
+animate();
+})();
+</script>
+</body>
+</html>
